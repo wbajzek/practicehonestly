@@ -137,6 +137,35 @@
   const dur = () => (isFinite(audio.duration) && audio.duration > 0 ? audio.duration : measured);
   const say = msg => { hintEl.textContent = msg; };
 
+  // Safari only: tell the system whether we are capturing or just playing, so it
+  // leaves the low-quality "call" audio mode as soon as a take is finished.
+  const setSession = type => {
+    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) { /* optional */ }
+  };
+
+  const MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)); // iPadOS reports itself as a Mac
+  const KEEP_MIC = !MOBILE;
+
+  // Open the page with ?debug to see what the browser actually gave us.
+  const DEBUG = /[?&]debug\b/.test(location.search);
+  let debugInfo = '';
+  if (DEBUG) { hintEl.style.userSelect = hintEl.style.webkitUserSelect = 'text'; hintEl.style.wordBreak = 'break-word'; }
+  function collectDebug(track) {
+    const s = track.getSettings ? track.getSettings() : {};
+    debugInfo = [
+      `mic: ${track.label}`,
+      `echoCancellation: ${s.echoCancellation}`,
+      `autoGainControl: ${s.autoGainControl}`,
+      `noiseSuppression: ${s.noiseSuppression}`,
+      `voiceIsolation: ${s.voiceIsolation}`,
+      `channels: ${s.channelCount}`,
+      `rate: ${s.sampleRate} (ctx ${ctx ? ctx.sampleRate : 'n/a'})`,
+      `format: ${recorder ? recorder.mimeType : 'n/a'}`,
+      `session: ${navigator.audioSession ? navigator.audioSession.type : 'n/a'}`
+    ].join(' · ');
+  }
+
   function setState(s) {
     state = s;
     document.body.dataset.state = s;
@@ -145,7 +174,7 @@
     canvas.tabIndex = ready ? 0 : -1;
     recBtn.setAttribute('aria-label', s === 'recording' ? 'Stop recording' : ready ? 'Record a new take' : 'Record');
     if (s !== 'recording') recBtn.style.setProperty('--level', 0);
-    say(s === 'idle' ? 'Tap to record' : s === 'recording' ? 'Recording' : '');
+    say(debugInfo || (s === 'idle' ? 'Tap to record' : s === 'recording' ? 'Recording' : ''));
     syncPlayButton();
     kick();
   }
@@ -158,6 +187,40 @@
 
   // ---------- recording ----------
 
+  const openMic = () => navigator.mediaDevices.getUserMedia({
+    // Voice-call processing ruins music: turn all of it off.
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+  });
+
+  function adoptStream(s) {
+    stream = s;
+    s.getAudioTracks()[0].addEventListener('ended', () => {
+      // Mic unplugged or revoked.
+      if (state === 'recording') stopRecording(); else releaseMic();
+    });
+  }
+
+  // A freshly opened mic takes a few seconds to settle to its real level, so on
+  // computers open it ahead of time and keep it open while the page is visible.
+  async function warmMic() {
+    if (!KEEP_MIC || stream || busy || state === 'recording') return;
+    if (document.visibilityState !== 'visible') return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return;
+    busy = true;
+    if (DEBUG) say(debugInfo = 'early mic open: waiting for the browser');
+    try {
+      setSession('play-and-record');
+      const s = await openMic();
+      if (document.visibilityState === 'visible') adoptStream(s);
+      else s.getTracks().forEach(t => t.stop());
+      if (DEBUG) say(debugInfo = `early mic open: ${stream ? 'ok' : 'skipped, page hidden'}`);
+    } catch (e) {
+      // The record button reports problems to the user.
+      if (DEBUG) say(debugInfo = `early mic open failed: ${e.name}: ${e.message}`);
+    }
+    busy = false;
+  }
+
   async function startRecording() {
     if (busy) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
@@ -168,15 +231,14 @@
     audio.pause();
     // Create the AudioContext inside the tap so iOS lets it run.
     const AC = window.AudioContext || window.webkitAudioContext;
-    const newCtx = AC ? new AC() : null;
-    let newStream;
-    try {
-      newStream = await navigator.mediaDevices.getUserMedia({
-        // Voice-call processing ruins music: turn all of it off.
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-      });
+    const newCtx = ctx || (AC ? new AC() : null);
+    let newStream = stream;
+    if (!newStream) try {
+      setSession('play-and-record');
+      newStream = await openMic();
     } catch (e) {
-      if (newCtx) newCtx.close();
+      if (newCtx && newCtx !== ctx) newCtx.close();
+      setSession(MOBILE ? 'playback' : 'auto');
       busy = false;
       say(e.name === 'NotAllowedError' || e.name === 'SecurityError'
         ? 'Microphone access is blocked. Allow it in your browser settings, then try again.'
@@ -190,9 +252,10 @@
     audio.removeAttribute('src'); audio.load();
     blob = null; url = null; chunks = []; peaks = [];
 
-    stream = newStream; ctx = newCtx;
-    if (ctx) {
-      ctx.resume();
+    if (stream !== newStream) adoptStream(newStream);
+    ctx = newCtx;
+    if (ctx) ctx.resume();
+    if (ctx && !analyser) {
       analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
       buf = new Float32Array(analyser.fftSize);
@@ -210,9 +273,17 @@
     recorder.start();
     startedAt = performance.now();
     recordedAt = new Date();
+    if (DEBUG) collectDebug(stream.getAudioTracks()[0]);
     setState('recording');
 
     try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* optional */ }
+  }
+
+  function releaseMic() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (ctx) ctx.close();
+    stream = ctx = analyser = null;
+    setSession(MOBILE ? 'playback' : 'auto');
   }
 
   function stopRecording() {
@@ -225,10 +296,11 @@
     const type = (recorder && recorder.mimeType) || (chunks[0] && chunks[0].type) || 'audio/mp4';
     blob = new Blob(chunks, { type });
     chunks = [];
-    // Release the mic so the phone switches back to full-quality speaker playback.
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    if (ctx) ctx.close();
-    stream = ctx = analyser = recorder = null;
+    recorder = null;
+    // On phones and tablets, release the mic so the device switches back to
+    // full-quality speaker playback. On computers it stays open (see warmMic).
+    const dead = !stream || stream.getAudioTracks().every(t => t.readyState === 'ended');
+    if (!KEEP_MIC || dead || document.visibilityState !== 'visible') releaseMic();
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 
     if (!blob.size) { setState('idle'); say('Nothing was recorded. Try again.'); return; }
@@ -395,12 +467,16 @@
 
   // The screen wake lock is dropped when the tab is hidden; take it back if still recording.
   document.addEventListener('visibilitychange', async () => {
+    // Don't hold the mic open in a background tab.
+    if (document.visibilityState === 'hidden' && state !== 'recording' && !busy) releaseMic();
+    if (document.visibilityState === 'visible') warmMic();
     if (document.visibilityState === 'visible' && state === 'recording') {
       try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* optional */ }
     }
   });
 
   setState('idle');
+  warmMic();
 })();
 </script>
 </body>

@@ -13,6 +13,10 @@ Everything is in `index.html`. There is no build step, no dependencies and no se
 
 Recordings are AAC in an `.m4a` file where the browser supports it (Safari, recent Chrome), otherwise WebM or Ogg. Echo cancellation, noise suppression and automatic gain are switched off so instruments sound like themselves.
 
+On computers the page asks for the microphone as soon as it loads and keeps it open while the tab is visible, because a freshly opened mic takes a few seconds to reach its real level. On phones and tablets the mic is opened per take so playback stays at full quality.
+
+Add `?debug` to the URL to see which microphone and audio settings the browser is actually using.
+
 ## Run locally
 
 Browsers only allow microphone access over HTTPS or on `localhost`:
