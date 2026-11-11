@@ -126,6 +126,7 @@
   let startedAt = 0, recordedAt = null, measured = 0;
   let blob = null, url = null, wakeLock = null;
   let raf = 0, fixing = false, dragging = false;
+  let fallback = 0, failure = '';  // format to fall back to after a failed take, and why it failed
 
   const audio = new Audio();
   audio.preload = 'auto';
@@ -229,6 +230,9 @@
     }
     busy = true;
     audio.pause();
+    // A mic that was opened ahead of time can go dead (sleep, device change):
+    // don't record from it, open a fresh one.
+    if (stream && !stream.getAudioTracks().some(t => t.readyState === 'live' && !t.muted)) releaseMic();
     // Create the AudioContext inside the tap so iOS lets it run.
     const AC = window.AudioContext || window.webkitAudioContext;
     const newCtx = ctx || (AC ? new AC() : null);
@@ -262,14 +266,17 @@
       ctx.createMediaStreamSource(stream).connect(analyser);
     }
 
-    const mimeType = MIMES.find(m => MediaRecorder.isTypeSupported(m));
+    const supported = MIMES.filter(m => MediaRecorder.isTypeSupported(m));
+    const mimeType = supported[fallback % (supported.length || 1)];
+    failure = '';
     const opts = { audioBitsPerSecond: 192000 };
     if (mimeType) opts.mimeType = mimeType;
     try { recorder = new MediaRecorder(stream, opts); }
     catch (e) { recorder = new MediaRecorder(stream); }
     recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
     recorder.onstop = finishRecording;
-    recorder.onerror = () => { stopRecording(); say('Recording stopped unexpectedly.'); };
+    // An error ends the recording by itself; finishRecording reports it.
+    recorder.onerror = e => { failure = (e.error && e.error.name) || 'recorder error'; stopRecording(); };
     recorder.start();
     startedAt = performance.now();
     recordedAt = new Date();
@@ -303,7 +310,17 @@
     if (!KEEP_MIC || dead || document.visibilityState !== 'visible') releaseMic();
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 
-    if (!blob.size) { setState('idle'); say('Nothing was recorded. Try again.'); return; }
+    if (!blob.size) {
+      // Either the mic sent nothing or the encoder failed. Start the next take
+      // with a freshly opened mic and the next format in the list.
+      const why = `${failure || 'no data'}, ${type}`;
+      fallback++;
+      releaseMic();
+      debugInfo = '';
+      setState('idle');
+      say(`Nothing was recorded (${why}). Try again.`);
+      return;
+    }
     url = URL.createObjectURL(blob);
     audio.src = url;
     setState('ready');
