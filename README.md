@@ -1,0 +1,27 @@
+# Practice Honestly
+
+A one-page recorder for practising musicians: record, listen back, go practise, repeat.
+
+Everything is in `index.html`. There is no build step, no dependencies and no server-side code. Recordings live only in memory and are replaced by the next take.
+
+## Use
+
+- **Record button**: start or stop a take. Starting a new take discards the previous one.
+- **Play button**: listen back. Tap or drag the waveform to jump around.
+- **Share button**: opens the system share sheet on iOS, Android and Safari; downloads the file elsewhere.
+- **Keyboard**: `R` records or stops, `Space` stops, plays or pauses, arrow keys seek on the waveform.
+
+Recordings are AAC in an `.m4a` file where the browser supports it (Safari, recent Chrome), otherwise WebM or Ogg. Echo cancellation, noise suppression and automatic gain are switched off so instruments sound like themselves.
+
+## Run locally
+
+Browsers only allow microphone access over HTTPS or on `localhost`:
+
+```sh
+python3 -m http.server 8000
+# then open http://localhost:8000
+```
+
+## Put it on your phone
+
+Host the folder on any static HTTPS host. With GitHub Pages: push this repo, then enable Pages for the `main` branch under Settings → Pages. Open the URL on the phone and use "Add to Home Screen" for a full-screen app.
