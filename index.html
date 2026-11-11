@@ -83,6 +83,7 @@
   #rec:active .dot { transform: scale(.94); }
   body[data-state="recording"] #rec .dot { width: 32px; height: 32px; border-radius: 7px; }
   #hint { min-height: 1.4em; margin: 0; color: var(--soft); font-size: 14px; text-align: center; }
+  #note { margin: -12px 0 0; max-width: 34ch; color: var(--soft); font-size: 12.5px; text-align: center; opacity: .85; }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -105,6 +106,7 @@
   </div>
 
   <p id="hint" role="status">Tap to record</p>
+  <p id="note" hidden>Safari may record the first few seconds of your first take quietly while the microphone warms up.</p>
 </main>
 
 <script>
@@ -147,6 +149,11 @@
   const MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
     (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)); // iPadOS reports itself as a Mac
   const KEEP_MIC = !MOBILE;
+
+  // Safari on a Mac (not Chrome/Firefox/Edge, which also say "Safari" in their UA).
+  const MAC_SAFARI = !MOBILE && /Safari\//.test(navigator.userAgent) &&
+    !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR/.test(navigator.userAgent);
+  if (MAC_SAFARI) $('note').hidden = false;
 
   // Open the page with ?debug to see what the browser actually gave us.
   const DEBUG = /[?&]debug\b/.test(location.search);
