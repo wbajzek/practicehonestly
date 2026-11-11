@@ -25,3 +25,7 @@ python3 -m http.server 8000
 ## Put it on your phone
 
 Host the folder on any static HTTPS host. With GitHub Pages: push this repo, then enable Pages for the `main` branch under Settings → Pages. Open the URL on the phone and use "Add to Home Screen" for a full-screen app.
+
+## License
+
+© 2026 William Bajzek. Licensed under [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0). See `LICENSE` for the full text.
